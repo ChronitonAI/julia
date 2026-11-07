@@ -35,6 +35,22 @@ function spin(n)
 end
 emit(spin, Int)
 
+# COM: Code generation makes a compare-and-swap loop of an atomic operation that the target has
+# COM: no instruction for (here x86-64's 128-bit exchange); the pass runs that expansion first,
+# COM: so that the loop ticks.
+# CHECK-LABEL: @julia_swap128
+# CHECK: top:
+# CHECK: call void asm sideeffect "testb $$0x80, 0x70001807
+# CHECK: atomicrmw.start:
+# CHECK-NEXT: %loaded = phi i128
+# CHECK-NEXT: call void asm sideeffect "testb $$0x80, 0x70001807
+# CHECK-NEXT: cmpxchg ptr
+mutable struct Wide
+    @atomic z::UInt128
+end
+swap128(w, v) = @atomicswap w.z = v
+emit(swap128, Wide, UInt128)
+
 const countdown = Ptr{UInt64}(UInt(0x70001800))
 const armed = UInt64(1) << 62
 # The ticks that spin(n) executes. Outside rr the countdown is disarmed (its top bit is set) and
