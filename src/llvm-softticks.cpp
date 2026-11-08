@@ -463,6 +463,15 @@ static unsigned instrumentFunction(Function &F, InlineAsm *Tick) JL_NOTSAFEPOINT
     return N;
 }
 
+// The tick, as inline asm for M's context.
+static InlineAsm *getTick(Module &M, const SoftTicksTarget &Target) JL_NOTSAFEPOINT
+{
+    LLVMContext &Ctx = M.getContext();
+    return InlineAsm::get(FunctionType::get(Type::getVoidTy(Ctx), false),
+                          escapeInlineAsm(Target.TickAsm), Target.Constraints,
+                          /*hasSideEffects=*/true);
+}
+
 static bool definesSoftTicksInit(const Module &M) JL_NOTSAFEPOINT
 {
     for (const Module::GlobalAsmFragment &Fragment : M.getModuleInlineAsm())
@@ -531,10 +540,7 @@ static bool addSoftTicks(Module &M, bool imaging, const TargetMachine *TM,
         if (const Function *R = GI.getResolverFunction())
             Resolvers.insert(R);
 
-    LLVMContext &Ctx = M.getContext();
-    InlineAsm *Tick = InlineAsm::get(FunctionType::get(Type::getVoidTy(Ctx), false),
-                                     escapeInlineAsm(Target->TickAsm), Target->Constraints,
-                                     /*hasSideEffects=*/true);
+    InlineAsm *Tick = getTick(M, *Target);
     unsigned Ticks = 0;
     for (Function &F : M) {
         if (!shouldInstrument(F, Resolvers))
@@ -556,6 +562,25 @@ static bool addSoftTicks(Module &M, bool imaging, const TargetMachine *TM,
 bool addSoftTicks(Module &M, bool imaging, const TargetMachine *TM) JL_NOTSAFEPOINT
 {
     return addSoftTicks(M, imaging, TM, nullptr);
+}
+
+void addSoftTicks(Function &F) JL_NOTSAFEPOINT
+{
+    Module &M = *F.getParent();
+    // Only in a module the pass instrumented (which also has the initializer, if imaging).
+    if (!M.getModuleFlag(SoftTicksMarker))
+        return;
+    const SoftTicksTarget *Target = getSoftTicksTarget(M.getTargetTriple());
+    if (!Target)
+        return;
+    SmallPtrSet<const Function *, 4> Resolvers;
+    for (const GlobalIFunc &GI : M.ifuncs())
+        if (const Function *R = GI.getResolverFunction())
+            Resolvers.insert(R);
+    if (!shouldInstrument(F, Resolvers))
+        return;
+    SoftTicksInserted += instrumentFunction(F, getTick(M, *Target));
+    ++SoftTicksFunctions;
 }
 
 PreservedAnalyses SoftTicksPass::run(Module &M, ModuleAnalysisManager &AM)

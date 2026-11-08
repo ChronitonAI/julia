@@ -114,4 +114,22 @@ if enabled
     init = UInt8[0xb8, 0x09, 0x00, 0x00, 0x00, 0xbf, 0x00, 0x10, 0x00, 0x70]
     # EXEC: image initializers: 1
     println("image initializers: ", count_bytes(init))
+    # The interposers for the compiler runtime's Float16 and BFloat16 conversions (__truncsfhf2,
+    # ...), which the image gets after the pipeline ran, tick too: `push %rax; <tick>; call;
+    # pop %rax; ret`, never `push %rax; call; pop %rax; ret`.
+    function interposers(ticked)
+        pre = ticked ? UInt8[0x50; tick; 0xe8] : UInt8[0x50, 0xe8]
+        n = 0
+        for i in 1:length(image) - length(pre) - 5
+            if view(image, i:i+length(pre)-1) == pre &&
+               image[i+length(pre)+4] == 0x58 && image[i+length(pre)+5] == 0xc3
+                n += 1
+            end
+        end
+        return n
+    end
+    # EXEC: image ticked interposers: true
+    println("image ticked interposers: ", interposers(true) >= 7)
+    # EXEC: image unticked interposers: 0
+    println("image unticked interposers: ", interposers(false))
 end

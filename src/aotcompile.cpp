@@ -1126,6 +1126,8 @@ static void injectCRTAlias(Module &M, StringRef name, StringRef alias, FunctionT
         CallArgs.push_back(&arg);
     auto val = builder.CreateCall(target, CallArgs);
     builder.CreateRet(val);
+    // Injected after optimization, so after the software ticks pass: tick it like the rest.
+    addSoftTicks(*interposer);
 }
 
 // See src/processor.h for documentation about this table. Corresponds to jl_image_shard_t.

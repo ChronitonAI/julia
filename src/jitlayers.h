@@ -102,6 +102,9 @@ void jl_softticks_init(void) JL_NOTSAFEPOINT;
 // Instruments the module (SoftTicksPass); returns whether it changed it. With TM, the target
 // the module is generated for, code generation's loop-making IR passes run first.
 bool addSoftTicks(Module &M, bool imaging, const TargetMachine *TM=nullptr) JL_NOTSAFEPOINT;
+// Instruments F, a function added to its module after the module was instrumented (a module
+// is instrumented once); nothing if the module was not.
+void addSoftTicks(Function &F) JL_NOTSAFEPOINT;
 
 struct OptimizationOptions {
     bool lower_intrinsics;
