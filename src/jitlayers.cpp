@@ -2130,7 +2130,7 @@ Error JuliaOJIT::addExternalModule(orc::JITDylib &JD, orc::ThreadSafeModule TSM,
             // These modules come optimized and skip our pipeline, but they must tick like the
             // rest of the JIT's code (a module instrumented already is left alone).
             if (jl_softticks_enabled())
-                addSoftTicks(M, /*imaging=*/false);
+                addSoftTicks(M, /*imaging=*/false, TM.get());
             return Error::success();
         }))
         return Err;

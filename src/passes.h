@@ -88,10 +88,14 @@ struct LowerPTLSPass : RequiredPassInfoMixin<LowerPTLSPass> {
 };
 
 // Software ticks for rr; must run last. imaging_mode adds the initializer and the note that
-// a linked image needs (src/llvm-softticks.cpp).
+// a linked image needs. With the TargetMachine the code is generated for, it first runs the
+// IR passes of code generation that make loops, so that those loops tick too
+// (src/llvm-softticks.cpp).
 struct SoftTicksPass : RequiredPassInfoMixin<SoftTicksPass> {
     bool imaging_mode;
-    SoftTicksPass(bool imaging_mode=false) JL_NOTSAFEPOINT : imaging_mode(imaging_mode) {}
+    const TargetMachine *TM;
+    SoftTicksPass(bool imaging_mode=false, const TargetMachine *TM=nullptr) JL_NOTSAFEPOINT
+        : imaging_mode(imaging_mode), TM(TM) {}
 
     PreservedAnalyses run(Module &M, ModuleAnalysisManager &AM) JL_NOTSAFEPOINT;
 };

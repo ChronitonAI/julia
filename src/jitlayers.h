@@ -99,8 +99,9 @@ void jl_softticks_add_option(void) JL_NOTSAFEPOINT;
 // Reads -julia-softticks, once the options are parsed, and maps the countdown's page when
 // ticks are enabled and the runtime has not mapped it.
 void jl_softticks_init(void) JL_NOTSAFEPOINT;
-// Instruments the module (SoftTicksPass); returns whether it changed it.
-bool addSoftTicks(Module &M, bool imaging) JL_NOTSAFEPOINT;
+// Instruments the module (SoftTicksPass); returns whether it changed it. With TM, the target
+// the module is generated for, code generation's loop-making IR passes run first.
+bool addSoftTicks(Module &M, bool imaging, const TargetMachine *TM=nullptr) JL_NOTSAFEPOINT;
 
 struct OptimizationOptions {
     bool lower_intrinsics;

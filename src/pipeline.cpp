@@ -673,7 +673,7 @@ static void buildPipeline(ModulePassManager &MPM, PassBuilder *PB, OptimizationL
     // Last, at every optimization level, so that no later pass duplicates, moves or deletes
     // a tick: the ticks are a property of the code that runs.
     if (options.softticks)
-        MPM.addPass(SoftTicksPass(options.dump_native));
+        MPM.addPass(SoftTicksPass(options.dump_native, TM));
     MPM.addPass(AfterOptimizationMarkerPass());
 }
 

@@ -24,6 +24,16 @@
 //      takes an edge the CFG does not show).
 // The pipeline runs this pass last, so the ticks are a property of the code that runs. Code
 // generation may duplicate or merge a tick sequence, but not change how often one executes.
+// It does make new loops of some IR, after the optimizer: AtomicExpand makes compare-and-swap
+// loops of the atomic operations the target has no instruction for (on x86, or/and/xor whose
+// result is used, nand, min/max, floating-point and 128-bit ones; on aarch64 without LSE,
+// LL/SC loops of all of them), ExpandIRInsts loops of the division of integers wider than 128
+// bits, and PreISelIntrinsicLowering loops of llvm.memcpy.inline and llvm.memset.inline of a
+// variable length. So given the TargetMachine the code is generated for, the pass runs those
+// first, as code generation would, and their loops get ticks like any other (code generation's
+// own runs then find nothing left to expand). Code generation's later loops still go unticked:
+// aarch64's CMP_SWAP pseudo-instructions at -O0 (LL/SC, without LSE), and stack probing, which
+// moves the stack pointer on every iteration.
 //
 // In imaging mode (system and package images, --output-o), every module with ticks also gets
 // the ABI's initializer, which maps the countdown's page when the image is loaded outside rr,
@@ -40,6 +50,9 @@
 #include <llvm/ADT/SmallVector.h>
 #include <llvm/ADT/Statistic.h>
 #include <llvm/Analysis/CFG.h>
+#include <llvm/CodeGen/AtomicExpand.h>
+#include <llvm/CodeGen/ExpandIRInsts.h>
+#include <llvm/CodeGen/PreISelIntrinsicLowering.h>
 #include <llvm/IR/BasicBlock.h>
 #include <llvm/IR/Constants.h>
 #include <llvm/IR/DerivedTypes.h>
@@ -50,6 +63,7 @@
 #include <llvm/IR/Instructions.h>
 #include <llvm/IR/Module.h>
 #include <llvm/IR/PassManager.h>
+#include <llvm/Passes/PassBuilder.h>
 #include <llvm/Support/CommandLine.h>
 #include <llvm/Support/Debug.h>
 #include <llvm/TargetParser/Triple.h>
@@ -457,9 +471,32 @@ static bool definesSoftTicksInit(const Module &M) JL_NOTSAFEPOINT
     return false;
 }
 
-} // namespace
+// Runs the IR passes of code generation that make loops (see the top of the file) on M, in
+// code generation's order, with M's analyses in MAM.
+static void expandLikeCodeGen(Module &M, ModuleAnalysisManager &MAM,
+                              const TargetMachine &TM) JL_NOTSAFEPOINT
+{
+    MAM.invalidate(M, PreISelIntrinsicLoweringPass(&TM).run(M, MAM));
+    FunctionAnalysisManager &FAM =
+        MAM.getResult<FunctionAnalysisManagerModuleProxy>(M).getManager();
+    for (Function &F : M) {
+        if (F.isDeclaration())
+            continue;
+        FAM.invalidate(F, ExpandIRInstsPass(TM, TM.getOptLevel()).run(F, FAM));
+        // Until nothing changes: the compare-and-swap loop AtomicExpand makes of an atomicrmw
+        // (aarch64's floating-point ones) holds a cmpxchg, which a second run makes an LL/SC
+        // loop of, as code generation's run would.
+        for (int i = 0; i < 4; i++) {
+            PreservedAnalyses PA = AtomicExpandPass(TM).run(F, FAM);
+            if (PA.areAllPreserved())
+                break;
+            FAM.invalidate(F, PA);
+        }
+    }
+}
 
-bool addSoftTicks(Module &M, bool imaging) JL_NOTSAFEPOINT
+static bool addSoftTicks(Module &M, bool imaging, const TargetMachine *TM,
+                         ModuleAnalysisManager *MAM) JL_NOTSAFEPOINT
 {
     if (M.getModuleFlag(SoftTicksMarker))
         return false;
@@ -468,6 +505,25 @@ bool addSoftTicks(Module &M, bool imaging) JL_NOTSAFEPOINT
         LLVM_DEBUG(dbgs() << "softticks: unsupported target " << M.getTargetTriple().str()
                           << ", module " << M.getModuleIdentifier() << " not instrumented\n");
         return false;
+    }
+    if (TM) {
+        if (MAM) {
+            expandLikeCodeGen(M, *MAM, *TM);
+        }
+        else {
+            // A module that skips the pipeline: analysis managers of its own.
+            LoopAnalysisManager LAM;
+            FunctionAnalysisManager FAM;
+            CGSCCAnalysisManager CGAM;
+            ModuleAnalysisManager OwnMAM;
+            PassBuilder PB(const_cast<TargetMachine *>(TM));
+            PB.registerModuleAnalyses(OwnMAM);
+            PB.registerCGSCCAnalyses(CGAM);
+            PB.registerFunctionAnalyses(FAM);
+            PB.registerLoopAnalyses(LAM);
+            PB.crossRegisterProxies(LAM, FAM, CGAM, OwnMAM);
+            expandLikeCodeGen(M, OwnMAM, *TM);
+        }
     }
 
     SmallPtrSet<const Function *, 4> Resolvers;
@@ -495,9 +551,16 @@ bool addSoftTicks(Module &M, bool imaging) JL_NOTSAFEPOINT
     return true;
 }
 
+} // namespace
+
+bool addSoftTicks(Module &M, bool imaging, const TargetMachine *TM) JL_NOTSAFEPOINT
+{
+    return addSoftTicks(M, imaging, TM, nullptr);
+}
+
 PreservedAnalyses SoftTicksPass::run(Module &M, ModuleAnalysisManager &AM)
 {
-    if (addSoftTicks(M, imaging_mode))
+    if (addSoftTicks(M, imaging_mode, TM, &AM))
         return PreservedAnalyses::none();
     return PreservedAnalyses::all();
 }
